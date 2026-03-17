@@ -43,9 +43,9 @@ export default async function handler(req, res) {
     // ----------------------
     // LIST PDF FILES
     // ----------------------
-    const listRes = await drive.files.list({
-      q: `'${INPUT_FOLDER_ID}' in parents and mimeType='application/pdf' and trashed=false`,
-      fields: "files(id, name)",
+    const res = await drive.files.list({
+    q: `'${INPUT_FOLDER_ID}' in parents and trashed=false and name contains '.pdf'`,
+    fields: "files(id, name)",
     });
     const files = listRes.data.files || [];
 
