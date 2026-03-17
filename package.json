@@ -9,7 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "formidable": "^3.5.4",
     "next": "16.1.7",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.4",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
