@@ -1,5 +1,4 @@
 // api/drive-watcher.js
-
 import { google } from "googleapis";
 import fs from "fs";
 import path from "path";
@@ -9,7 +8,7 @@ import FormData from "form-data";
 export default async function handler(req, res) {
   try {
     // ----------------------
-    // TEMP DIR FOR THIS EXECUTION
+    // TEMP DIR FOR SERVERLESS
     // ----------------------
     const TEMP_DIR = "/tmp"; // Vercel serverless temp dir
     if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR);
@@ -17,14 +16,15 @@ export default async function handler(req, res) {
     // ----------------------
     // ENV VARIABLES CHECK
     // ----------------------
-    if (!process.env.GOOGLE_SERVICE_JSON)
-      throw new Error("GOOGLE_SERVICE_JSON not set");
-    if (!process.env.DRIVE_INPUT_FOLDER_ID)
-      throw new Error("DRIVE_INPUT_FOLDER_ID not set");
-    if (!process.env.DRIVE_PROCESSED_FOLDER_ID)
-      throw new Error("DRIVE_PROCESSED_FOLDER_ID not set");
-    if (!process.env.PDF_PROCESSOR_API)
-      throw new Error("PDF_PROCESSOR_API not set");
+    const requiredEnvs = [
+      "GOOGLE_SERVICE_JSON",
+      "DRIVE_INPUT_FOLDER_ID",
+      "DRIVE_PROCESSED_FOLDER_ID",
+      "PDF_PROCESSOR_API",
+    ];
+    for (const key of requiredEnvs) {
+      if (!process.env[key]) throw new Error(`${key} not set`);
+    }
 
     const INPUT_FOLDER_ID = process.env.DRIVE_INPUT_FOLDER_ID;
     const PROCESSED_FOLDER_ID = process.env.DRIVE_PROCESSED_FOLDER_ID;
@@ -34,7 +34,6 @@ export default async function handler(req, res) {
     // AUTHENTICATION
     // ----------------------
     const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_JSON);
-
     const auth = new google.auth.GoogleAuth({
       credentials: serviceAccount,
       scopes: ["https://www.googleapis.com/auth/drive"],
@@ -48,7 +47,6 @@ export default async function handler(req, res) {
       q: `'${INPUT_FOLDER_ID}' in parents and mimeType='application/pdf' and trashed=false`,
       fields: "files(id, name)",
     });
-
     const files = listRes.data.files || [];
 
     if (files.length === 0) {
@@ -56,20 +54,23 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, message: "No PDFs found." });
     }
 
+    const processedFiles = [];
+
     // ----------------------
     // PROCESS FILES
     // ----------------------
     for (const file of files) {
       try {
-        console.log("Processing:", file.name);
+        console.log("📄 Found PDF:", file.name);
 
-        // 1️⃣ Download file locally
+        // 1️⃣ Download locally
         const localPath = path.join(TEMP_DIR, file.name);
         const fileRes = await drive.files.get(
           { fileId: file.id, alt: "media" },
           { responseType: "arraybuffer" }
         );
-        fs.writeFileSync(localPath, Buffer.from(fileRes.data)); // ✅ FIXED
+        fs.writeFileSync(localPath, Buffer.from(fileRes.data));
+        console.log("✅ Downloaded to temp:", localPath, "Size:", fs.statSync(localPath).size);
 
         // 2️⃣ Send to PDF processing API
         const formData = new FormData();
@@ -81,29 +82,37 @@ export default async function handler(req, res) {
         });
 
         const processedPath = localPath.replace(".pdf", "_secured.pdf");
-        fs.writeFileSync(processedPath, Buffer.from(processedRes.data)); // ✅ FIXED
+        fs.writeFileSync(processedPath, Buffer.from(processedRes.data));
+        console.log("✅ Processed PDF saved locally:", processedPath, "Size:", fs.statSync(processedPath).size);
+
+        if (fs.statSync(processedPath).size === 0) {
+          console.warn("⚠️ Processed PDF is empty:", processedPath);
+          continue; // skip upload
+        }
 
         // 3️⃣ Upload processed PDF to Drive
-        await drive.files.create({
+        const uploadRes = await drive.files.create({
           resource: { name: path.basename(processedPath), parents: [PROCESSED_FOLDER_ID] },
           media: { mimeType: "application/pdf", body: fs.createReadStream(processedPath) },
           fields: "id",
         });
+        console.log("📤 Uploaded to Drive with ID:", uploadRes.data.id);
 
-        // 4️⃣ Delete original PDF from input folder
+        processedFiles.push(file.name);
+
+        // 4️⃣ Delete original input PDF
         await drive.files.delete({ fileId: file.id });
+        console.log("🗑 Deleted original input PDF:", file.name);
 
         // 5️⃣ Cleanup temp files
         fs.unlinkSync(localPath);
         fs.unlinkSync(processedPath);
-
-        console.log("✅ Successfully processed:", file.name);
       } catch (fileErr) {
-        console.error("❌ Error processing file:", file.name, fileErr.message);
+        console.error("❌ Error processing file:", file.name, fileErr);
       }
     }
 
-    res.status(200).json({ success: true, processed: files.length });
+    res.status(200).json({ success: true, processed: processedFiles });
   } catch (err) {
     console.error("❌ Drive watcher error:", err);
     res.status(500).json({ error: err.message });
