@@ -43,11 +43,15 @@ export default async function handler(req, res) {
     // ----------------------
     // LIST PDF FILES
     // ----------------------
-    const res = await drive.files.list({
-    q: `'${INPUT_FOLDER_ID}' in parents and trashed=false and name contains '.pdf'`,
-    fields: "files(id, name)",
-    });
-    const files = listRes.data.files || [];
+    async function listFiles() {
+      const listRes = await drive.files.list({
+        q: `'${INPUT_FOLDER_ID}' in parents and trashed=false and name contains '.pdf'`,
+        fields: "files(id, name)",
+      });
+      return listRes.data.files || [];
+    }
+
+    const files = await listFiles();
 
     if (files.length === 0) {
       console.log("No PDFs found in input folder.");
